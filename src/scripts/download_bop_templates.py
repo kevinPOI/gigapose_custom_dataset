@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+import zipfile
 import hydra
 from omegaconf import DictConfig
 from src.utils.logging import get_logger
@@ -22,11 +23,12 @@ def download(cfg: DictConfig) -> None:
 
     download_cmd = f"wget -O {tmp_dir}/templates.zip {source_url}"
     logger.info(f"Running {download_cmd}")
-    # os.system(download_cmd)
+    os.system(download_cmd)
 
-    unzip_cmd = f"unzip {tmp_dir}/templates.zip -d {tmp_dir}"
-    logger.info(f"Running {unzip_cmd}")
-    os.system(unzip_cmd)
+    zip_path = tmp_dir / "templates.zip"
+    logger.info(f"Extracting {zip_path} to {tmp_dir}")
+    with zipfile.ZipFile(zip_path, "r") as zip_ref:
+        zip_ref.extractall(tmp_dir)
     
     os.rename(
         tmp_dir / "templates",

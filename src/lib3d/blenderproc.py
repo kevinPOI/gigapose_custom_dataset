@@ -7,6 +7,22 @@ from PIL import Image
 import logging
 
 
+def estimate_obj_diameter(cad_path):
+    if not str(cad_path).lower().endswith(".obj"):
+        return None
+    vertices = []
+    with open(cad_path, "r", encoding="utf-8", errors="ignore") as f:
+        for line in f:
+            if line.startswith("v "):
+                parts = line.split()
+                if len(parts) >= 4:
+                    vertices.append([float(parts[1]), float(parts[2]), float(parts[3])])
+    if not vertices:
+        return None
+    vertices = np.asarray(vertices, dtype=np.float64)
+    return float(np.linalg.norm(np.ptp(vertices, axis=0)))
+
+
 def render_blender_proc(
     cad_path,
     output_dir,
@@ -95,6 +111,9 @@ if __name__ == "__main__":
     parser.add_argument(
         "scale_translation", nargs="?", help="scale translation to meter"
     )
+    parser.add_argument(
+        "mesh_scale", nargs="?", default="1.0", help="Additional mesh scale"
+    )
     args = parser.parse_args()
 
     os.makedirs(args.output_dir, exist_ok=True)
@@ -102,8 +121,12 @@ if __name__ == "__main__":
     os.environ["EGL_VISIBLE_DEVICES"] = str(args.gpus_devices)
 
     poses = np.load(args.obj_pose)
-    # we can increase high energy for lightning but it's simpler to change just scale of the object to meter
-    poses[:, :3, :3] = poses[:, :3, :3] / 1000.0
+    # If CAD vertices look millimeter-scaled, scale the object to meters via the pose matrix.
+    # Small custom meshes may already be in meters, so scaling them again makes blank renders.
+    mesh_diameter = estimate_obj_diameter(args.cad_path)
+    if mesh_diameter is None or mesh_diameter > 10:
+        poses[:, :3, :3] = poses[:, :3, :3] / 1000.0
+    poses[:, :3, :3] = poses[:, :3, :3] * float(args.mesh_scale)
     poses[:, :3, 3] = poses[:, :3, 3] / 1000.0
 
     K = np.array([572.4114, 0.0, 320, 0.0, 573.57043, 240, 0.0, 0.0, 1.0]).reshape(

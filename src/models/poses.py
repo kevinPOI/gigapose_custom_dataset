@@ -15,13 +15,28 @@ class ObjectPoseRecovery(torch.nn.Module):
         template_K,
         template_Ms,
         template_poses,
+        template_labels=None,
         pixel_threshold=14,
     ):
         super(ObjectPoseRecovery, self).__init__()
         self.template_K = template_K
         self.template_Ms = template_Ms
         self.template_poses = template_poses
+        self.template_labels = template_labels
+        if template_labels is not None:
+            self.label_to_idx = {
+                int(label): idx for idx, label in enumerate(template_labels.tolist())
+            }
+        else:
+            self.label_to_idx = None
         self.ransac = RANSAC(pixel_threshold=pixel_threshold)
+
+    def map_template_indices(self, tar_label):
+        if self.label_to_idx is None:
+            return tar_label - 1
+        tar_label_np = tar_label.detach().cpu().numpy().astype(int)
+        tar_idx_np = [self.label_to_idx[int(label)] for label in tar_label_np]
+        return torch.as_tensor(tar_idx_np, device=tar_label.device, dtype=torch.long)
 
     def _forward_recovery(
         self,
@@ -108,9 +123,10 @@ class ObjectPoseRecovery(torch.nn.Module):
         pred_src_views,
         pred_M,
     ):
-        template_poses = self.template_poses.clone()[tar_label - 1]
-        template_Ms = self.template_Ms.clone()[tar_label - 1]
-        template_K = self.template_K.clone()[tar_label - 1]
+        tar_idx = self.map_template_indices(tar_label)
+        template_poses = self.template_poses.clone()[tar_idx]
+        template_Ms = self.template_Ms.clone()[tar_idx]
+        template_K = self.template_K.clone()[tar_idx]
         return self._forward_recovery(
             query_M=tar_M,
             query_K=tar_K,

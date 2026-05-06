@@ -12,6 +12,10 @@ from src.utils.dataset import LMO_index_to_ID
 from src.custom_megapose.template_dataset import TemplateDataset, NearestTemplateFinder
 import torch
 import src.megapose.utils.tensor_collection as tc
+from src.utils.logging import get_logger
+
+
+logger = get_logger(__name__)
 
 
 class TemplateSet(Dataset):
@@ -21,6 +25,7 @@ class TemplateSet(Dataset):
         dataset_name,
         template_config,
         transforms,
+        selected_obj_id=None,
         **kwargs,
     ):
         self.root_dir = Path(root_dir)
@@ -35,12 +40,42 @@ class TemplateSet(Dataset):
             self.root_dir / self.dataset_name / cad_name / "models_info.json"
         )
         self.model_infos = [{"obj_id": int(obj_id)} for obj_id in model_infos.keys()]
+        if selected_obj_id is not None:
+            self.model_infos = [
+                model_info
+                for model_info in self.model_infos
+                if int(model_info["obj_id"]) == int(selected_obj_id)
+            ]
 
         template_config.dir += f"/{dataset_name}"
+        self.model_infos = self.filter_model_infos_with_templates(
+            self.model_infos,
+            Path(template_config.dir),
+            template_config.pose_name,
+        )
         self.template_dataset = TemplateDataset.from_config(
             self.model_infos, template_config
         )
         self.template_finder = NearestTemplateFinder(template_config)
+
+    def filter_model_infos_with_templates(self, model_infos, template_dir, pose_name):
+        filtered_model_infos = []
+        missing_obj_ids = []
+        for model_info in model_infos:
+            obj_id = int(model_info["obj_id"])
+            obj_template_dir = template_dir / f"{obj_id:06d}"
+            obj_pose_path = Path(str(template_dir / pose_name.replace("OBJECT_ID", f"{obj_id:06d}")))
+            if obj_template_dir.exists() and obj_pose_path.exists():
+                filtered_model_infos.append(model_info)
+            else:
+                missing_obj_ids.append(obj_id)
+
+        if missing_obj_ids:
+            logger.warning(
+                f"Skipping {len(missing_obj_ids)} objects without templates for {self.dataset_name}: "
+                f"{missing_obj_ids}"
+            )
+        return filtered_model_infos
 
     def get_cad_name(self, dataset_name):
         if dataset_name in ["tless"]:
@@ -54,10 +89,11 @@ class TemplateSet(Dataset):
 
     def __getitem__(self, index):
         # loading templates
+        obj_id = int(self.model_infos[index]["obj_id"])
         if "lmo" in self.dataset_name:
-            label = LMO_index_to_ID[index]
+            label = str(obj_id)
         else:
-            label = f"{index+1}"
+            label = f"{obj_id}"
 
         # load template data
         template_data = self.template_dataset.get_object_templates(label)

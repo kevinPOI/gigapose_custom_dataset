@@ -71,7 +71,7 @@ def run_test(cfg: DictConfig):
         model.run_id = wandb.run.id
     else:
         model.run_id = cfg.run_id
-    model.log_interval = len(test_dataloader) // 30
+    model.log_interval = max(1, len(test_dataloader) // 30)
     logger.info("Dataloaders initialized!")
 
     trainer.test(

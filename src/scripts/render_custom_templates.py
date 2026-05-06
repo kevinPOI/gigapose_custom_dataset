@@ -19,13 +19,15 @@ def call_render(
     idx_obj,
     list_cad_path,
     list_output_dir,
-    obj_pose_path,
+    list_obj_pose_path,
     disable_output,
     num_gpus,
     use_blenderProc,
 ):
     output_dir = list_output_dir[idx_obj]
-    cad_path = list_cad_path[idx_obj]
+    cad_path = Path(list_cad_path[idx_obj]).resolve()
+    obj_pose_path = Path(list_obj_pose_path[idx_obj]).resolve()
+    output_dir = Path(output_dir).resolve()
     if os.path.exists(output_dir):
         os.system("rm -r {}".format(output_dir))
     if not os.path.exists(output_dir):
@@ -64,7 +66,7 @@ def render(cfg) -> None:
     disable_output = True
 
     OmegaConf.set_struct(cfg, False)
-    root_dir = Path(cfg.data.test.root_dir)
+    root_dir = Path(cfg.data.test.root_dir).resolve()
     root_save_dir = root_dir / "templates"
     template_poses = get_obj_poses_from_template_level(level=1, pose_distribution="all")
     template_poses[:, :3, 3] *= 0.4  # zoom to object
@@ -84,6 +86,7 @@ def render(cfg) -> None:
     logger.info(f"Found {len(list(cad_paths))} objects")
 
     output_dirs = []
+    obj_pose_paths = []
     for cad_path in cad_paths:
         object_id = int(os.path.basename(cad_path).split(".")[0][4:])
         output_dir = dataset_save_dir / f"{object_id:06d}"
@@ -91,6 +94,7 @@ def render(cfg) -> None:
 
         obj_pose_path = os.path.join(obj_pose_dir, f"{object_id:06d}.npy")
         np.save(obj_pose_path, template_poses)
+        obj_pose_paths.append(obj_pose_path)
 
     os.makedirs(dataset_save_dir, exist_ok=True)
 
@@ -103,7 +107,7 @@ def render(cfg) -> None:
         call_render,
         list_cad_path=cad_paths,
         list_output_dir=output_dirs,
-        obj_pose_path=obj_pose_path,
+        list_obj_pose_path=obj_pose_paths,
         disable_output=disable_output,
         num_gpus=num_gpus,
         use_blenderProc=True if dataset_name in ["tless", "itodd"] else False,

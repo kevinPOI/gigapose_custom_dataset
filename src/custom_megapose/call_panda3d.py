@@ -25,6 +25,9 @@ if __name__ == "__main__":
     parser.add_argument(
         "scale_translation", nargs="?", help="scale translation to meter"
     )
+    parser.add_argument(
+        "mesh_scale", nargs="?", default="1.0", help="Additional mesh scale"
+    )
     args = parser.parse_args()
 
     os.makedirs(args.output_dir, exist_ok=True)
@@ -60,6 +63,7 @@ if __name__ == "__main__":
 
     # load object poses
     object_poses = np.load(args.obj_pose)
+    object_poses[:, :3, :3] *= float(args.mesh_scale)
     if mesh_units == "m" or args.scale_translation == "true":
         object_poses[:, :3, 3] /= 1000.0
 

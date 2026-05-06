@@ -56,29 +56,40 @@ class GigaPoseTestSet(GigaPoseTrainSet):
         test_setting,
         load_gt=True,
         init_loc_path=None,  # for refinement
+        selected_obj_id=None,
     ):
         split, model_name = self.get_split_name(dataset_name)
         self.batch_size = batch_size
         self.root_dir = Path(root_dir)
         self.dataset_name = dataset_name
+        self.selected_obj_id = (
+            None if selected_obj_id is None else int(selected_obj_id)
+        )
         self.transforms = transforms
         if self.transforms.rgb_augmentation:
             self.transforms.rgb_transform.transform = [
                 transform for transform in self.transforms.rgb_transform.transform
             ]
 
-        # load the dataset
-        webdataset_dir = self.root_dir / self.dataset_name
-        web_dataset = WebSceneDataset(webdataset_dir / split, depth_scale=depth_scale)
-        self.web_dataloader = IterableWebSceneDataset(web_dataset, set_length=True)
-
         # load the template dataset
         model_infos = inout.load_json(
             self.root_dir / self.dataset_name / model_name / "models_info.json"
         )
         model_infos = [{"obj_id": int(obj_id)} for obj_id in model_infos.keys()]
+        if self.selected_obj_id is not None:
+            model_infos = [
+                model_info
+                for model_info in model_infos
+                if int(model_info["obj_id"]) == self.selected_obj_id
+            ]
 
         template_config.dir += f"/{dataset_name}"
+        model_infos = self.filter_model_infos_with_templates(
+            model_infos,
+            Path(template_config.dir),
+            template_config.pose_name,
+        )
+        self.available_obj_ids = {int(model_info["obj_id"]) for model_info in model_infos}
         self.template_dataset = TemplateDataset.from_config(
             model_infos, template_config
         )
@@ -97,8 +108,37 @@ class GigaPoseTestSet(GigaPoseTrainSet):
             logger.info("Loaded init loc for refinement!")
         self.load_gt = load_gt
 
+        # load the dataset
+        webdataset_dir = self.root_dir / self.dataset_name
+        selected_keys = set(self.test_list.keys())
+        web_dataset = WebSceneDataset(
+            webdataset_dir / split,
+            depth_scale=depth_scale,
+            selected_keys=selected_keys,
+        )
+        self.web_dataloader = IterableWebSceneDataset(web_dataset, set_length=True)
+
         # keypoint sampler
         self.keypoint_sampler = KeyPointSampler()
+
+    def filter_model_infos_with_templates(self, model_infos, template_dir, pose_name):
+        filtered_model_infos = []
+        missing_obj_ids = []
+        for model_info in model_infos:
+            obj_id = int(model_info["obj_id"])
+            obj_template_dir = template_dir / f"{obj_id:06d}"
+            obj_pose_path = Path(str(template_dir / pose_name.replace("OBJECT_ID", f"{obj_id:06d}")))
+            if obj_template_dir.exists() and obj_pose_path.exists():
+                filtered_model_infos.append(model_info)
+            else:
+                missing_obj_ids.append(obj_id)
+
+        if missing_obj_ids:
+            logger.warning(
+                f"Skipping {len(missing_obj_ids)} objects without templates for {self.dataset_name}: "
+                f"{missing_obj_ids}"
+            )
+        return filtered_model_infos
 
     def load_detections(self, test_setting):
         if test_setting == "localization":
@@ -111,6 +151,66 @@ class GigaPoseTestSet(GigaPoseTrainSet):
             test_setting,
             max_det_per_object_id=max_det_per_object_id,
         )
+        self.filter_entries_without_templates()
+        if self.selected_obj_id is not None:
+            filtered_test_list = {}
+            for image_key, targets in self.test_list.items():
+                selected_targets = [
+                    target
+                    for target in targets
+                    if int(target["obj_id"]) == self.selected_obj_id
+                ]
+                if len(selected_targets) > 0:
+                    filtered_test_list[image_key] = selected_targets
+
+            filtered_cnos_dets = {}
+            for image_key, dets in self.cnos_dets.items():
+                selected_dets = [
+                    det
+                    for det in dets
+                    if int(det["category_id"]) == self.selected_obj_id
+                ]
+                if len(selected_dets) > 0 and image_key in filtered_test_list:
+                    filtered_cnos_dets[image_key] = selected_dets
+
+            self.test_list = filtered_test_list
+            self.cnos_dets = filtered_cnos_dets
+            logger.info(
+                f"Filtered test set to obj_id={self.selected_obj_id}: "
+                f"{len(self.test_list)} images"
+            )
+
+    def filter_entries_without_templates(self):
+        if not hasattr(self, "available_obj_ids"):
+            return
+
+        dropped_targets = 0
+        filtered_test_list = {}
+        for image_key, targets in self.test_list.items():
+            kept_targets = [
+                target for target in targets if int(target["obj_id"]) in self.available_obj_ids
+            ]
+            dropped_targets += len(targets) - len(kept_targets)
+            if kept_targets:
+                filtered_test_list[image_key] = kept_targets
+        self.test_list = filtered_test_list
+
+        dropped_dets = 0
+        filtered_cnos_dets = {}
+        for image_key, dets in self.cnos_dets.items():
+            kept_dets = [
+                det for det in dets if int(det["category_id"]) in self.available_obj_ids
+            ]
+            dropped_dets += len(dets) - len(kept_dets)
+            if kept_dets:
+                filtered_cnos_dets[image_key] = kept_dets
+        self.cnos_dets = filtered_cnos_dets
+
+        if dropped_targets > 0 or dropped_dets > 0:
+            logger.warning(
+                f"Skipped {dropped_targets} target entries and {dropped_dets} detections "
+                "because templates are missing for their object ids."
+            )
 
     def load_init_loc(self, init_loc_path, test_setting, min_score=0.25):
         (
@@ -171,9 +271,9 @@ class GigaPoseTestSet(GigaPoseTrainSet):
             infos = scene_obs.infos
             scene_id, im_id = int(infos.scene_id), int(infos.view_id)
             image_key = f"{scene_id:06d}_{im_id:06d}"
-            target_list = self.test_list[image_key]
+            target_list = self.test_list.get(image_key, [])
             target_lists.append(target_list)
-            if image_key in self.cnos_dets:
+            if image_key in self.cnos_dets and len(self.cnos_dets[image_key]) > 0:
                 detection_times.append(self.cnos_dets[image_key][0]["time"])
             else:
                 logger.warning(f"Image key {image_key} not in cnos_dets!")
@@ -207,7 +307,7 @@ class GigaPoseTestSet(GigaPoseTrainSet):
             infos = scene_obs.infos
             scene_id, im_id = int(infos.scene_id), int(infos.view_id)
             image_key = f"{scene_id:06d}_{im_id:06d}"
-            dets = self.cnos_dets[image_key]
+            dets = self.cnos_dets.get(image_key, [])
             if len(scene_obs.object_datas) == 0:
                 gt_available = False
             else:

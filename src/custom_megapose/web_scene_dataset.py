@@ -123,10 +123,12 @@ class WebSceneDataset(SceneDataset):
         load_segmentation: bool = True,
         label_format: str = "{label}",
         load_frame_index: bool = False,
+        selected_keys: Optional[set[str]] = None,
     ):
         self.depth_scale = depth_scale
         self.label_format = label_format
         self.wds_dir = wds_dir
+        self.selected_keys = selected_keys
 
         frame_index = self.load_frame_index()
 
@@ -147,6 +149,10 @@ class WebSceneDataset(SceneDataset):
             keys.append(key)
             shard_fnames.append(shard_fname)
         frame_index = pd.DataFrame({"key": keys, "shard_fname": shard_fnames})
+        if self.selected_keys is not None:
+            frame_index = frame_index[frame_index["key"].isin(self.selected_keys)].reset_index(
+                drop=True
+            )
         return frame_index
 
     def get_tar_list(self) -> List[str]:
@@ -202,6 +208,11 @@ class IterableWebSceneDataset(IterableSceneDataset):
             samples: Iterator[SceneObservation],
         ) -> Iterator[SceneObservation]:
             for sample in samples:
+                if (
+                    self.web_scene_dataset.selected_keys is not None
+                    and sample["__key__"] not in self.web_scene_dataset.selected_keys
+                ):
+                    continue
                 yield load_scene_ds_obs_(sample)
 
         self.datapipeline = wds.DataPipeline(

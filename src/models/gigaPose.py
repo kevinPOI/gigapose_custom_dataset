@@ -67,6 +67,7 @@ class GigaPose(pl.LightningModule):
 
         # for testing
         self.template_datas = {}
+        self.template_label_to_idx = {}
         self.pose_recovery = {}
         self.l2_loss = nn.MSELoss()
         self.timer = Timer()
@@ -358,6 +359,14 @@ class GigaPose(pl.LightningModule):
         logger.info("Initializing template data ...")
         self.timer.tic()
         template_dataset = self.template_datasets[dataset_name]
+        template_labels = torch.as_tensor(
+            [int(model_info["obj_id"]) for model_info in template_dataset.model_infos],
+            dtype=torch.long,
+            device=self.device,
+        )
+        self.template_label_to_idx[dataset_name] = {
+            int(label): idx for idx, label in enumerate(template_labels.cpu().tolist())
+        }
         names = ["rgb", "mask", "K", "M", "poses", "ae_features", "ist_features"]
         template_data = {name: BatchedData(None) for name in names}
 
@@ -391,11 +400,18 @@ class GigaPose(pl.LightningModule):
             template_K=template_data["K"],
             template_Ms=template_data["M"],
             template_poses=template_data["poses"],
+            template_labels=template_labels,
         )
         num_obj = len(template_data["K"])
         onboarding_time = self.timer.toc() / num_obj
         self.timer.reset()
         logger.info(f"Init {dataset_name} done! Avg time={onboarding_time} s/object")
+
+    def map_template_indices(self, tar_label, dataset_name):
+        label_to_idx = self.template_label_to_idx[dataset_name]
+        tar_label_np = tar_label.detach().cpu().numpy().astype(np.int32)
+        tar_idx_np = [label_to_idx[int(label)] for label in tar_label_np]
+        return torch.as_tensor(tar_idx_np, device=tar_label.device, dtype=torch.long)
 
     def filter_and_save(
         self,
@@ -455,9 +471,10 @@ class GigaPose(pl.LightningModule):
         idx_sample = torch.arange(0, predictions.id_src.shape[0], device=device)
         tar_label_np = np.asarray(predictions.infos.label).astype(np.int32)
         tar_label = torch.from_numpy(tar_label_np).to(device)
+        tar_idx = self.map_template_indices(tar_label, self.test_dataset_name)
 
-        src_imgs = template_data.rgb[tar_label - 1]
-        src_masks = template_data.mask[tar_label - 1]
+        src_imgs = template_data.rgb[tar_idx]
+        src_masks = template_data.mask[tar_idx]
         tar_img = batch.tar_img[selected_idxs]
         tar_mask = batch.tar_mask[selected_idxs]
         pred_imgs = []
@@ -496,6 +513,9 @@ class GigaPose(pl.LightningModule):
 
         B, C, H, W = batch.tar_img.shape
         device = batch.tar_img.device
+        if len(batch.test_list.infos) == 0:
+            logger.info(f"Skipping batch {idx_batch}: no selected target objects")
+            return
 
         # if low_memory_mode, two detections are forward at a time
         list_idx_sample = []
@@ -515,10 +535,11 @@ class GigaPose(pl.LightningModule):
                 batch.infos.label[idx_sample.cpu().numpy()]
             ).astype(np.int32)
             tar_label = torch.from_numpy(tar_label_np).to(device)
+            tar_idx = self.map_template_indices(tar_label, dataset_name)
 
             # template data
-            src_ae_features = template_data.ae_features[tar_label - 1]
-            src_masks = template_data.mask[tar_label - 1]
+            src_ae_features = template_data.ae_features[tar_idx]
+            src_masks = template_data.mask[tar_idx]
 
             # Step 1: Nearest neighbor search
             self.timer.tic()
@@ -548,8 +569,9 @@ class GigaPose(pl.LightningModule):
 
             tar_label_np = np.asarray(batch.infos.label).astype(np.int32)
             tar_label = torch.from_numpy(tar_label_np).to(device)
+            tar_idx = self.map_template_indices(tar_label, dataset_name)
 
-            src_ist_features = template_data.ist_features[tar_label - 1]
+            src_ist_features = template_data.ist_features[tar_idx]
             tar_ist_features = self.ist_net.forward_by_chunk(batch.tar_img[idx_sample])
 
             if self.max_num_dets_per_forward is not None:

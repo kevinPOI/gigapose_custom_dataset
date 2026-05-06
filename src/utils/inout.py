@@ -418,15 +418,18 @@ def load_test_list_and_cnos_detections(
         year = "24"
         det_model = "cnos-sam"
     else:
-        raise NotImplementedError(
-            f"Dataset {dataset_name} is not supported with default detections!"
-        )
+        year = "19"
+        det_model = "cnos-fastsam"
     cnos_dets_dir = (
         root_dir / "default_detections" / f"core{year}_model_based_unseen/" / det_model
     )
     # list all detections and take the one matching the dataset_name
     avail_det_files = os.listdir(cnos_dets_dir)
-    cnos_dets_path = [file for file in avail_det_files if dataset_name in file][0]
+    matching_det_files = [file for file in avail_det_files if dataset_name in file]
+    assert (
+        len(matching_det_files) > 0
+    ), f"No detection file found for dataset_name={dataset_name} in {cnos_dets_dir}"
+    cnos_dets_path = matching_det_files[0]
     all_cnos_dets = inout.load_json(os.path.join(cnos_dets_dir, cnos_dets_path))
 
     # sort by image_id

@@ -36,6 +36,13 @@ def group_by_keys(data, keys=base_plus_ext, lcase=True, suffixes=None, handler=N
     current_sample = None
     for filesample in data:
         assert isinstance(filesample, dict)
+        # Newer webdataset versions emit EOF markers like {} between shards.
+        # Skip records without file payload fields instead of crashing.
+        if "fname" not in filesample or "data" not in filesample:
+            if valid_sample(current_sample):
+                yield current_sample
+            current_sample = None
+            continue
         fname, value = filesample["fname"], filesample["data"]
         prefix, suffix = keys(fname)
         if trace:

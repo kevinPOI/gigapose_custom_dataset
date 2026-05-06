@@ -74,6 +74,11 @@ class TemplateData:
         rgba = open_image(image_path, inplane)
         depth = open_image(depth_path, inplane)
         box = rgba.getbbox()
+        if box is None:
+            raise RuntimeError(
+                f"Template image is empty (bbox is None): image={image_path}, "
+                f"depth={depth_path}, view_id={view_id}, object_dir={self.template_dir}"
+            )
         box_size = (box[2] - box[0], box[3] - box[1])
         if min(box_size) == 0:
             box = (0, 0, int(rgba.size[0]), int(rgba.size[1]))

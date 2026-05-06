@@ -1,0 +1,8 @@
+/sata1/data/kevin/v2_imgs/train_1/rgb_10071.png
+/sata1/data/kevin/v2_imgs/train_1/rgb_10464.png
+/sata1/data/kevin/v2_imgs/train_1/rgb_10733.png
+/sata1/data/kevin/v2_imgs/train_1/rgb_7530.png
+/sata1/data/kevin/v2_imgs/train_1/rgb_8372.png
+/sata1/data/kevin/v2_imgs/train_1/rgb_9802.png
+/sata1/data/kevin/v2_imgs/train_2/rgb_15831.png
+/sata1/data/kevin/v2_imgs/train_2/rgb_16661.png
