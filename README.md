@@ -1,332 +1,356 @@
-<div align="center">
-<h2>
-GigaPose: Fast and Robust Novel Object Pose Estimation 
+# GigaPose Custom Object Pipeline
 
-via One Correspondence
-<p></p>
-</h2>
+This README documents the custom workflow in this repo for:
 
-<h3>
-<a href="https://nv-nguyen.github.io/" target="_blank"><nobr>Van Nguyen Nguyen</nobr></a> &emsp;
-<a href="http://imagine.enpc.fr/~groueixt/" target="_blank"><nobr>Thibault Groueix</nobr></a> &emsp;
-<a href="https://people.epfl.ch/mathieu.salzmann" target="_blank"><nobr>Mathieu Salzmann</nobr></a> &emsp;
-<a href="https://vincentlepetit.github.io/" target="_blank"><nobr>Vincent Lepetit</nobr></a>
+- onboarding one STL, or all STLs in a folder
+- rendering GigaPose templates
+- running GigaPose inference on a custom image set
+- visualizing grasp points for one object at a time using a per-object `feasible_grasps.json`
 
-<p></p>
+This file is about the custom pipeline in this repo. The original upstream project notes are preserved in `README_gigapose_upstream.md`.
 
-<a href="https://nv-nguyen.github.io/gigapose/"><img 
-src="https://img.shields.io/badge/-Webpage-blue.svg?colorA=333&logo=html5" height=28em></a>
-<a href="https://arxiv.org/abs/2311.14155"><img 
-src="https://img.shields.io/badge/-Paper-blue.svg?colorA=333&logo=arxiv" height=28em></a>
-<a href="https://drive.google.com/file/d/11V9J4voUkovMIFxOeDCkaO7uf9EfCTZ0/view?usp=sharing"><img 
-src="https://img.shields.io/badge/-SuppMat-blue.svg?colorA=333&logo=drive" height=28em></a>
-<p></p>
+## Quick Start
 
-<p align="center">
-  <img src=./media/qualitative.png width="100%"/>
-</p>
+If you want to verify the pipeline end to end before using your own assets, this repo includes a small demo bundle under `demo_asset/`. It is assumed that you are using the perseve-sam2 environment from Perseve's main repo, or have installed all relavent packages.
 
-</h4>
-</div>
+From the repository root:
 
-**TL;DR**: GigaPose is a "hybrid" template-patch correspondence approach to estimate 6D pose of novel objects in RGB images: GigaPose first uses templates, rendered images of the CAD models, to recover the out-of-plane rotation (2DoF) and then uses patch correspondences to estimate the remaining 4DoF. 
+```bash
+conda activate perseve-sam2
 
-The codebase is slightly modified to adapt [BOP challenge 2024](https://bop.felk.cvut.cz/challenges/bop-challenge-2024/), if you work on [BOP challenge 2023](https://bop.felk.cvut.cz/challenges/bop-challenge-20243) and have any issues, please go back to previous commits:
-```
-git checkout 388e8bddd8a5443e284a7f70ad103d03f3f461c5
-```
+export DATASET=hex_nut
+export OBJ_ID=6
+export STL_PATH=demo_asset/meshes/hex_nut.stl
+export IMAGE_LIST=demo_asset/image_list.txt
+export FEASIBLE_GRASPS_JSON=demo_asset/grasp_library/hex_nut_feasible_grasps.json
+export MASK_ANNOTATION_DIR=demo_asset/mask_annotations
 
+python -m src.scripts.prepare_single_object_img_list_dataset \
+  --image-list $IMAGE_LIST \
+  --mesh-path $STL_PATH \
+  --dataset-name $DATASET \
+  --dataset-root gigaPose_datasets/datasets \
+  --obj-id $OBJ_ID
 
-### News 📣
-- [May 24th, 2024] We added the instructions for running on [BOP challenge 2024](https://bop.felk.cvut.cz/challenges/bop-challenge-2024/) datasets and fixed memory requirement issues.
-- [January 19th, 2024] We released the intructions for estimating pose of novel objects from a single reference image on LM-O dataset.
-- [January 11th, 2024] We released the code for both training and testing settings. We are working on the demo for custom objects including detecting novel objects with [CNOS](https://github.com/nv-nguyen/cnos) and novel object pose estimation from a single reference image by reconstructing objects with [Wonder3D](https://github.com/xxlong0/Wonder3D). Stay tuned!
-## Citations
-``` Bash
-@inproceedings{nguyen2024gigaPose,
-    title={GigaPose: Fast and Robust Novel Object Pose Estimation via One Correspondence},
-    author={Nguyen, Van Nguyen and Groueix, Thibault and Salzmann, Mathieu and Lepetit, Vincent},
-    booktitle = {Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition},
-    year={2024}}
-```
-GigaPose's codebase is mainly derived from [CNOS](https://github.com/nv-nguyen/cnos) and [MegaPose](https://github.com/megapose6d/megapose6d):
-``` Bash
-@inproceedings{nguyen2023cnos,
-    title={CNOS: A Strong Baseline for CAD-based Novel Object Segmentation},
-    author={Nguyen, Van Nguyen and Groueix, Thibault and Ponimatkin, Georgy and Lepetit, Vincent and Hodan, Tomas},
-    booktitle={Proceedings of the IEEE/CVF International Conference on Computer Vision},
-    pages={2134--2140},
-    year={2023}
-}
+python -m src.scripts.render_templates_from_mesh_dir \
+  gigaPose_datasets/datasets/$DATASET/models \
+  --output-dir gigaPose_datasets/datasets/templates/$DATASET \
+  --renderer blenderproc \
+  --num-workers 1 \
+  --num-gpus 1 \
+  --disable-output \
+  --mesh-scale 10
 
-@inproceedings{labbe2022megapose,
-    title     = {MegaPose: 6D Pose Estimation of Novel Objects via Render \& Compare},
-    author    = {Labb\'e, Yann and Manuelli, Lucas and Mousavian, Arsalan and Tyree, Stephen and Birchfield, Stan and Tremblay, Jonathan and Carpentier, Justin and Aubry, Mathieu and Fox, Dieter and Sivic, Josef},
-    booktitle = {Proceedings of the 6th Conference on Robot Learning (CoRL)},
-    year      = {2022},
-} 
+python test_myprints.py \
+  --dataset-name $DATASET \
+  --run-id $DATASET \
+  --selected-obj-id $OBJ_ID \
+  --test-setting localization
+
+python -m src.scripts.adaptive_map_grasp_point_to_2d \
+  --dataset-dir gigaPose_datasets/datasets/$DATASET \
+  --result-csv gigaPose_datasets/results/large_$DATASET/predictions/large-pbrreal-rgb-mmodel_${DATASET}-test_${DATASET}.csv \
+  --output-dir gigaPose_datasets/results/large_$DATASET/adaptive_grasp_point_mapping \
+  --object-name $OBJ_ID \
+  --feasible-grasps-json $FEASIBLE_GRASPS_JSON \
+  --mask-annotation-dir $MASK_ANNOTATION_DIR
 ```
 
-## Installation :construction_worker:
+This demo bundle contains:
 
-<details><summary>Click to expand</summary>
+- one STL
+- eight RGB frames
+- matching semantic mask annotations for those frames
+- one feasible grasp JSON for the demo object
 
-### Environment
-```
-conda env create -f environment.yml
-conda activate gigapose
-bash src/scripts/install_env.sh
+## What This Pipeline Assumes
 
-# to install megapose
-pip install -e .
+The custom pipeline expects:
 
-# to install bop_toolkit 
-pip install git+https://github.com/thodan/bop_toolkit.git
-```
+- you cloned this repository from GitHub
+- a conda environment named exactly `perseve-sam2`
 
-### Checkpoints
-```
-# download cnos detections for BOP'23 dataset
-pip install -U "huggingface_hub[cli]"
-python -m src.scripts.download_default_detections
-
-# download gigaPose's checkpoints 
-python -m src.scripts.download_gigapose
-
-# download megapose's checkpoints
-python -m src.scripts.download_megapose
+```bash
+conda activate perseve-sam2
 ```
 
-### Datasets
-All datasets are defined in [BOP format](https://bop.felk.cvut.cz/datasets/). 
+- GigaPose checkpoint at:
 
-For [BOP challenge 2024](https://bop.felk.cvut.cz/challenges/bop-challenge-2024/) core datasets (HOPE, HANDAL, HOT-3D), download each dataset with the following command:
-```
-pip install -U "huggingface_hub[cli]"
-export DATASET_NAME=hope
-python -m src.scripts.download_test_bop24 test_dataset_name=$DATASET_NAME
+```text
+gigaPose_datasets/pretrained/gigaPose_v1.ckpt
 ```
 
-For [BOP challenge 2023](https://bop.felk.cvut.cz/challenges/bop-challenge-2023/) core datasets (LMO, TLESS, TUDL, ICBIN, ITODD, HB, and TLESS), download all datasets with the following command:
-```
-# download testing images and CAD models
-python -m src.scripts.download_test_bop23
-```
+- custom RGB images
+- either:
+  - a single STL and an image list, or
+  - a folder of objects plus instance masks / detections
 
-For [BOP challenge 2024](https://bop.felk.cvut.cz/challenges/bop-challenge-2024/) core datasets (HOPE, HANDAL, HOT-3D), render the templates from the CAD models:
-```
-python -m src.scripts.render_bop_templates test_dataset_name=hope
-```
+For grasp visualization, this README assumes:
 
-For [BOP challenge 2023](https://bop.felk.cvut.cz/challenges/bop-challenge-2023/) core datasets (LMO, TLESS, TUDL, ICBIN, ITODD, HB, and TLESS), we provide the pre-rendered templates (from [this link](https://huggingface.co/datasets/nv-nguyen/gigaPose/resolve/main/templates.zip)) and also the code to render the templates from the CAD models.
-```
-# option 1: download pre-rendered templates 
-python -m src.scripts.download_bop_templates
+- you visualize one object at a time
+- each object has its own feasible grasp library JSON
+- you explicitly pass that JSON to the visualization script
+- you do not rely on any hardcoded default grasps
 
-# option 2: render templates from CAD models 
-python -m src.scripts.render_bop_templates
-```
+## Repo Files Used in This Workflow
 
-Here is the structure of $ROOT_DIR after downloading all the above files (similar to [BOP HuggingFace Hub](https://huggingface.co/datasets/bop-benchmark/datasets/tree/main)):
-```
-├── $ROOT_DIR
-    ├── datasets/ 
-      ├── default_detections/  
-      ├── lmo/ 
-      ├── ... 
-      ├── templates/
-    ├── pretrained/ 
-      ├── gigaPose_v1.ckpt 
-      ├── megapose-models/
-```
+Main entry points:
 
-[Optional] We also provide the training code/datasets which is not necessary for testing purposes.
-<details><summary>Click to expand</summary>
+- `src/scripts/prepare_single_object_img_list_dataset.py`
+- `src/scripts/prepare_custom_test_dataset.py`
+- `src/scripts/render_templates_from_mesh_dir.py`
+- `test_myprints.py`
+- `src/scripts/vis_custom_predictions.py`
+- `src/scripts/adaptive_map_grasp_point_to_2d.py`
 
-```
-# download training images (> 2TB)
-python -m src.scripts.download_train_metaData
-python -m src.scripts.download_train_cad 
-python -m src.scripts.download_train 
+## Output Layout
 
-# render templates ( 162 imgs/obj takes ~30mins for gso, ~20hrs for shapenet)
-python -m src.scripts.render_gso_templates 
-python -m src.scripts.render_shapenet_templates  
-```
+This custom workflow writes into `gigaPose_datasets/`:
 
-If you have training datasets pre-downloaded, you can create a symlink to the folder containing the datasets by running:
-```
-ln -s /path/to/datasets/gso $ROOT/datasets/gso
+```text
+gigaPose_datasets/
+  datasets/
+    <dataset_name>/
+      models/
+      test_imagewise/
+      test/
+      test_targets_bop19.json
+    templates/
+      <dataset_name>/
+        <obj_id>/
+        object_poses/
+    default_detections/
+      core19_model_based_unseen/
+        cnos-fastsam/
+  results/
+    large_<run_id>/
+      predictions/
+      visualizations/
+      adaptive_grasp_point_mapping/
 ```
 
-[Optional] Trick for faster converging of ISTNetwork (in-plane, scale, translation): using pretrained weights of [LoFTR](https://drive.google.com/file/d/1kW2bQejjMlmE7FGberHrubXpE_ttX2LB/view?usp=drive_link) after Kaiming initialization. Please download the weights and put them in `$ROOT_DIR/pretrained/loftr_indoor_ot.ckpt`.
+## Step 0: Activate Environment
 
-</details>
+From the repository root:
 
-</details>
-
-
-##  Testing on [BOP datasets](https://bop.felk.cvut.cz/datasets/) :rocket:
-
-<p align="center">
-  <img src=./media/inference.png width="100%"/>
-</p>
-
-If you want to test on [BOP challenge 2024](https://bop.felk.cvut.cz/challenges/bop-challenge-2024/) datasets, please follow the instructions below:
-<details><summary>Click to expand</summary>
-
-1. Running coarse prediction on a single dataset:
-```
-# for 6D detection task
-python test.py test_dataset_name=hope run_id=$NAME_RUN test_setting=detection
-
-# for 6D localization task (for only core19 datasets)
-python test.py test_dataset_name=lmo run_id=$NAME_RUN test_setting=localization
+```bash
+conda activate perseve-sam2
 ```
 
-2. Running refinement on a single dataset:
-```
-# for both 6D detection task
-python refine.py test_dataset_name=hope run_id=$NAME_RUN test_setting=detection
+## Workflow A: One STL + One Image List
 
-# for 6D localization task (for only core19 datasets)
-python refine.py test_dataset_name=lmo run_id=$NAME_RUN test_setting=localization
-```
-Quantitative results on 6D detection task on HOPEv2 datasets:
+Use this when:
 
-| Method      | Refinement      | Model-based unseen |
-|---------------|---------------|-----------|
-| GigaPose  | --  | 22.57 | 
-| GigaPose  | MegaPose  | -- | 
+- you want to evaluate one object
+- you already know which STL you want
+- you have a text file containing one RGB path per line
 
+### A1. Prepare the Dataset
 
-3. Evaluating with [BOP toolkit](https://github.com/thodan/bop_toolkit):
-```
-export INPUT_DIR=DIR_TO_YOUR_PREDICTION_FILE
-export FILE_NAME=NAME_PREDICTION_FILE
-cd $ROOT_DIR_OF_TOOLKIT
-python scripts/eval_bop24_pose.py --results_path $INPUT_DIR --eval_path $INPUT_DIR --result_filenames=$FILE_NAME
-```
+```bash
+export DATASET=<dataset_name>
+export OBJ_ID=<object_id>
+export STL_PATH=/path/to/object_mesh.stl
+export IMAGE_LIST=/path/to/image_list.txt
 
-</details>
-
-If you want to test on [BOP challenge 2023](https://bop.felk.cvut.cz/challenges/bop-challenge-2023/) datasets, please follow the instructions below:
-
-<details><summary>Click to expand</summary>
-
-GigaPose's coarse prediction for seven core datasets of BOP challenge 2023 is available in [this link](https://drive.google.com/file/d/1QaGNIPZyR8FOOsT35V7pWJF2VlN9_M6l/view?usp=sharing). Below are the steps to reproduce the results and evaluate with BOP toolkit.
-
-1. Running coarse prediction on a single dataset:
-```
-python test.py test_dataset_name=lmo run_id=$NAME_RUN
+python -m src.scripts.prepare_single_object_img_list_dataset \
+  --image-list $IMAGE_LIST \
+  --mesh-path $STL_PATH \
+  --dataset-name $DATASET \
+  --dataset-root gigaPose_datasets/datasets \
+  --obj-id $OBJ_ID
 ```
 
-2. Running refinement on a single dataset:
-```
-python refine.py test_dataset_name=lmo run_id=$NAME_RUN
-```
+This creates:
 
-3. Running all steps for all 7 core datasets of BOP challenge:
-```
-python -m src.scripts.eval_bop
-```
+- `gigaPose_datasets/datasets/$DATASET/models/obj_<object_id>.obj`
+- `gigaPose_datasets/datasets/$DATASET/test_imagewise/...`
+- `gigaPose_datasets/datasets/$DATASET/test/shard-000000.tar`
+- fallback detections under `default_detections/...`
 
-3. Evaluating with [BOP toolkit](https://github.com/thodan/bop_toolkit):
-```
-export INPUT_DIR=DIR_TO_YOUR_PREDICTION_FILE
-export FILE_NAME=NAME_PREDICTION_FILE
-python bop_toolkit/scripts/eval_bop19_pose.py --renderer_type=vispy --results_path $INPUT_DIR --eval_path $INPUT_DIR --result_filenames=$FILE_NAME
-```
+### A2. Render Templates
 
-</details>
-
-##  Pose estimation from a single image on [LM-O](https://bop.felk.cvut.cz/datasets/) :smiley_cat:
-
-<p align="center">
-  <img src=./media/wonder3d_meshes.png width="100%"/>
-</p>
-
-<details><summary>Click to expand</summary>
-
-If you work on this setting, please first go back to previous commits:
-```
-git checkout 388e8bddd8a5443e284a7f70ad103d03f3f461c5
+```bash
+python -m src.scripts.render_templates_from_mesh_dir \
+  gigaPose_datasets/datasets/$DATASET/models \
+  --output-dir gigaPose_datasets/datasets/templates/$DATASET \
+  --renderer blenderproc \
+  --num-workers 1 \
+  --num-gpus 1 \
+  --disable-output \
+  --mesh-scale 10
 ```
 
-Then, download CNOS's detections:
-```
-# download gigaPose's checkpoints 
-python -m src.scripts.download_cnos_bop23
-```
+Notes:
 
-To relax the need of CAD models, we can reconstruct 3D models from a single image using recent works on diffusion-based 3D reconstruction such as [Wonder3D](https://github.com/xxlong0/Wonder3D), then apply the same pipeline as GigaPose to estimate object pose. Here are the steps to reproduce the results of novel object pose estimation from a single image on LM-O dataset as shown in our paper:
+- `--mesh-scale` is useful for small custom meshes.
+- `--renderer panda3d` is available, but BlenderProc is the main path used here.
 
-- Step 1: Selecting the input reference image for each object. We provide the list of reference images in [SuppMat](https://drive.google.com/file/d/11V9J4voUkovMIFxOeDCkaO7uf9EfCTZ0/view?usp=sharing). 
-- Step 2: Cropping the input image (and save the [cropping matrix](https://github.com/nv-nguyen/gigapose/blob/main/src/utils/crop.py#L49) for recovering the correct scale for reconstructed 3D models).
-- Step 3: Reconstructing 3D models from the reference images using [Wonder3D](https://github.com/xxlong0/Wonder3D). Note that the output 3D models are reconstructed in the coordinate frame of input image and in [orthographic camera](https://github.com/xxlong0/Wonder3D/blob/57b0e88ac45000a9cc100df2733c6cb30ce5e108/NeuS/models/dataset_mvdiff.py#L174).
-- Step 4: Recovering the scale of reconstructed 3D models using the cropping matrix of Step 2. 
-- Step 5: Estimating the object pose using GigaPose's pipeline. 
+Sanity check:
 
-We provide [here](https://huggingface.co/datasets/nv-nguyen/gigaPose/resolve/main/wonder3d_inout.zip) the inputs and outputs of Wonder3D, [here](https://huggingface.co/datasets/nv-nguyen/gigaPose/resolve/main/wonder3d_mesh.zip) the reconstructed 3D models in Step 1-3 and, [this script](https://github.com/nv-nguyen/gigapose/blob/main/src/scripts/recover_scale_wonder3d.py) to recover 3D models in the correct scale. [Here](https://huggingface.co/datasets/nv-nguyen/gigaPose/resolve/main/lmoWonder3d.zip) is the reconstructed 3D models in the correct scale and in the GT coordinate frame discussed below (note that the GT canonical frame is only for evaluation purposes with BOP Toolkit, while for real applications, we can use the object pose in the input reference image as the canonical frame). 
+- the object-specific template directory should contain both RGBA PNGs and depth PNGs
+- rendered template images should have non-empty alpha for at least some views
 
-<details><summary>Click to expand</summary>
+### A3. Run GigaPose
 
-### Canonical frame for bop toolkit
-
-For all evaluations, we use [bop toolkit](https://github.com/thodan/bop_toolkit.git) which requires the estimated poses defined in the same coordinate frame of GT CAD models. Therefore, there are two options:
-- Option 1: Transforming the GT CAD models to the coordinate frame of the input image and adjust the GT poses accordingly.
-- Option 2: Reconstructing the 3D models, then transforming it to the coordinate frame of GT CAD models by assuming the object pose in the input reference image is known.
-
-Given that the metrics VSD, MSSD, MSPD employed in the [bop toolkit](https://github.com/thodan/bop_toolkit.git) depend on the canonical frame of the object, and for a meaningful comparison with [MegaPose](https://github.com/megapose6d/megapose6d) and GigaPose's results using GT CAD models, we opt Option 2. 
-</details>
-
-
-Once the reconstructed 3D models are in the correct scale and in the GT coordinate frame, we can now estimate the object pose using GigaPose's pipeline in Step 5:
-
-```
-# download the reconstructed 3D models, test images, and test_targets_bop19.json
-mkdir $ROOT_DIR/datasets/lmoWonder3d
-wget https://huggingface.co/datasets/nv-nguyen/gigaPose/resolve/main/lmoWonder3d.zip -P $ROOT_DIR/datasets/lmoWonder3d
-unzip -j $ROOT_DIR/datasets/lmoWonder3d/lmoWonder3d.zip -d $ROOT_DIR/datasets/lmoWonder3d/models -x "*/._*"
-
-# treat lmoWonder3d as a new dataset by creating a symlink 
-ln -s $ROOT_DIR/datasets/lmo/test $ROOT_DIR/datasets/lmoWonder3d/test
-ln -s $ROOT_DIR/datasets/lmo/test_targets_bop19.json $ROOT_DIR/datasets/lmoWonder3d/test_targets_bop19.json
-
-# Onboarding by rendering templates from reconstructed 3D models
-python -m src.scripts.render_custom_templates custom_dataset_name=lmoWonder3d
-
-# now, it can be tested as a normal dataset as in the previous section
-python test.py test_dataset_name=lmoWonder3d run_id=$NAME_RUN
-python refine.py test_dataset_name=lmoWonder3d run_id=$NAME_RUN
+```bash
+python test_myprints.py \
+  --dataset-name $DATASET \
+  --run-id $DATASET \
+  --selected-obj-id $OBJ_ID \
+  --test-setting localization
 ```
 
-We provide [here](https://drive.google.com/file/d/1kowbL3EaNPma_Tell2iBLsJo1RlILSNJ/view?usp=sharing) the (coarse, refined) results with reconstructed CAD models.
+Prediction CSV:
 
-<p align="center">
-  <img src=./media/wonder3d_result.png width="100%"/>
-</p>
-
-
-</details>
-
-##  Training
-<p align="center">
-  <img src=./media/training.png width="100%"/>
-</p>
-<details><summary>Click to expand</summary>
-
-```
-# train on GSO (ID=0), ShapeNet (ID=1), or both (ID=2)
-python train.py train_dataset_id=$ID
+```text
+gigaPose_datasets/results/large_<DATASET>/predictions/large-pbrreal-rgb-mmodel_<DATASET>-test_<DATASET>.csv
 ```
 
-</details>
+### A4. Optional Pose Visualization
 
-## 👩‍⚖️ License
-Unless otherwise specified, all code in this repository is made available under MIT license. 
+```bash
+python -m src.scripts.vis_custom_predictions \
+  --dataset-dir gigaPose_datasets/datasets/$DATASET \
+  --result-csv gigaPose_datasets/results/large_$DATASET/predictions/large-pbrreal-rgb-mmodel_${DATASET}-test_${DATASET}.csv \
+  --output-dir gigaPose_datasets/results/large_$DATASET/visualizations
+```
 
-## 🤝 Acknowledgments
-This code is heavily borrowed from [MegaPose](https://github.com/megapose6d/megapose6d) and [CNOS](https://github.com/nv-nguyen/cnos). 
+### A5. Grasp Visualization for One Object
 
-The authors thank Jonathan Tremblay, Medéric Fourmy, Yann Labbé, Michael Ramamonjisoa and Constantin Aronssohn for their help and valuable feedbacks!
+Prepare one feasible grasp JSON for the object you are visualizing. Then run:
+
+```bash
+export FEASIBLE_GRASPS_JSON=/path/to/object_feasible_grasps.json
+
+python -m src.scripts.adaptive_map_grasp_point_to_2d \
+  --dataset-dir gigaPose_datasets/datasets/$DATASET \
+  --result-csv gigaPose_datasets/results/large_$DATASET/predictions/large-pbrreal-rgb-mmodel_${DATASET}-test_${DATASET}.csv \
+  --output-dir gigaPose_datasets/results/large_$DATASET/adaptive_grasp_point_mapping \
+  --object-name $OBJ_ID \
+  --feasible-grasps-json $FEASIBLE_GRASPS_JSON
+```
+
+Important:
+
+- this guide assumes the feasible grasp JSON is the source of grasp candidates
+- do not depend on hardcoded default grasps
+- visualize one object at a time
+
+If you have real semantic masks for the RGB frames, also pass the mask directory:
+
+```bash
+  --mask-annotation-dir /path/to/semantic_mask_folder
+```
+
+The script will:
+
+- read the predicted object pose from the GigaPose CSV
+- choose the feasible pose that best matches the predicted tabletop orientation
+- project the corresponding grasp points to 2D
+- optionally recenter the grasp cluster to the object mask centroid
+
+Outputs:
+
+- overlay images
+- `projected_points.csv`
+
+## Workflow B: All STLs in a Folder
+
+Use this when:
+
+- you want to onboard all objects in a mesh folder
+- your images may contain multiple object classes
+- you have instance segmentation masks or equivalent object-level detections
+
+There are two parts:
+
+1. build the dataset with all object meshes and all image annotations
+2. render templates for every object in the dataset
+
+### B1. Prepare a Multi-Object Dataset
+
+If your raw dataset already has:
+
+- `rgb_XXXX.png`
+- `instance_segmentation_XXXX.png`
+- `instance_segmentation_mapping_XXXX.json`
+
+then use:
+
+```bash
+export DATASET=<dataset_name>
+export RAW_ROOT=/path/to/raw_rgb_and_instance_masks
+export MESH_DIR=/path/to/all_meshes
+
+python -m src.scripts.prepare_custom_test_dataset \
+  --raw-root $RAW_ROOT \
+  --mesh-dir $MESH_DIR \
+  --dataset-root gigaPose_datasets/datasets \
+  --dataset-name $DATASET
+```
+
+This script:
+
+- builds `name_to_obj_id.json` from the mesh folder or `models/`
+- writes the dataset layout
+- generates object detections from the instance masks
+- writes the webdataset shard for GigaPose testing
+
+### B2. Make Sure `models/` Contains `obj_XXXXXX.obj` or `obj_XXXXXX.ply`
+
+`render_templates_from_mesh_dir.py` expects:
+
+```text
+gigaPose_datasets/datasets/<dataset_name>/models/obj_000001.obj
+gigaPose_datasets/datasets/<dataset_name>/models/obj_000002.obj
+...
+```
+
+If your meshes start as STL files, convert or symlink them into this naming convention first.
+
+### B3. Render Templates for All Objects
+
+```bash
+python -m src.scripts.render_templates_from_mesh_dir \
+  gigaPose_datasets/datasets/$DATASET/models \
+  --output-dir gigaPose_datasets/datasets/templates/$DATASET \
+  --renderer blenderproc \
+  --num-workers 1 \
+  --num-gpus 1 \
+  --disable-output
+```
+
+This renders all objects found in `models/`.
+
+### B4. Run GigaPose on the Multi-Object Dataset
+
+```bash
+python test_myprints.py \
+  --dataset-name $DATASET \
+  --run-id $DATASET \
+  --test-setting localization
+```
+
+If you want to restrict inference to one object:
+
+```bash
+python test_myprints.py \
+  --dataset-name $DATASET \
+  --run-id $DATASET \
+  --selected-obj-id 6 \
+  --test-setting localization
+```
+
+### B5. Visualize Grasps for One Object
+
+Even for a multi-object dataset, grasp visualization is one object at a time:
+
+```bash
+python -m src.scripts.adaptive_map_grasp_point_to_2d \
+  --dataset-dir gigaPose_datasets/datasets/$DATASET \
+  --result-csv gigaPose_datasets/results/large_$DATASET/predictions/large-pbrreal-rgb-mmodel_${DATASET}-test_${DATASET}.csv \
+  --output-dir gigaPose_datasets/results/large_$DATASET/adaptive_grasp_point_mapping \
+  --object-name <object_id> \
+  --feasible-grasps-json /path/to/object_feasible_grasps.json
+```
